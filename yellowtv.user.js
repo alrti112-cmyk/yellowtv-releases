@@ -415,6 +415,41 @@
   };
 });
 
+// Videos on some sites/devices play ~3 s and then stall (decoder or player hiccup); stepping back a little and playing
+// again gets them going. This does that by itself. In the Android app, after repeated freezes it first offers the
+// stream to the native player (YellowTVNative.stalled -> true = the app takes over). Works in userscripts too.
+(function () {
+  'use strict';
+  if (window.__yellowtvUnfreeze) return;
+  window.__yellowtvUnfreeze = true;
+  const log = (m) => { try { console.log('[yellowtv-media] ' + location.hostname + ' ' + m); } catch (_) { /* no console */ } };
+  const watch = new WeakMap();
+  setInterval(() => {
+    for (const v of document.querySelectorAll('video')) {
+      let w = watch.get(v);
+      if (!w) { w = { t: -1, n: 0, ok: 0, kicks: 0, last: 0 }; watch.set(v, w); }
+      const t = v.currentTime || 0;
+      const running = !v.paused && !v.ended && !v.seeking && t > 0.5;
+      if (running && Math.abs(t - w.t) < 0.05) { w.n++; w.ok = 0; }
+      else { w.n = 0; if (running && ++w.ok >= 15) w.kicks = 0; }
+      w.t = t;
+      if (w.n >= 3 && Date.now() - w.last > 3500) {
+        w.last = Date.now();
+        w.n = 0;
+        w.kicks++;
+        log('video FROZEN at ' + t.toFixed(1) + ' (kick ' + w.kicks + ')');
+        let handled = false;
+        if (w.kicks >= 3) {
+          try { if (window.YellowTVNative && YellowTVNative.stalled) handled = !!YellowTVNative.stalled(t); } catch (_) { /* not in the app */ }
+        }
+        if (!handled) {
+          try { v.pause(); v.currentTime = Math.max(0, t - 3); const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (_) { /* gone */ }
+        }
+      }
+    }
+  }, 1000);
+})();
+
 // Picks the per-site config (same rules/sites.json as the desktop app) and starts the engine.
 // The two placeholder tokens below are replaced by MainActivity before injection.
 (function () {
